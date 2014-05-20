@@ -303,6 +303,13 @@ PUBLIC int maSslModuleInit(Http *http, MprModule *module)
 
     //  This is undocumented
     maAddDirective(appweb, "SSLVerifyDepth", sslVerifyDepthDirective);
+#if BIT_STATIC
+    /*
+        Pull in the libmprssl code at link time.
+     */
+    extern MprModuleEntry mprSslInit;
+    mprNop(mprSslInit);
+#endif
     return 0;
 }
 #else

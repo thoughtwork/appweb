@@ -40,7 +40,7 @@ extern "C" {
  */
 typedef void (*EspProc)(HttpConn *conn);
 
-#define CONTENT_MARKER  "${_ESP_CONTENT_MARKER_}"       /* Layout content marker */
+#define CONTENT_MARKER  "_ESP_CONTENT_MARKER_"       /* Layout content marker */
 
 #if BIT_WIN_LIKE
     #define ESP_EXPORT __declspec(dllexport)

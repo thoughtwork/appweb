@@ -242,7 +242,7 @@
     #else
         //  MOB #if BIT_64
         #if defined(__amd64__) || defined(__x86_64__) || defined(__ppc64__) || defined(__powerpc64__) || \
-                defined(__ia64__)  || defined(__alpha__)
+                defined(__ia64__) || defined(__mips64) || defined(__alpha__)
             typedef uint t_dbl __attribute__ ((mode(TI)));
         #else
             typedef unsigned long long t_dbl;

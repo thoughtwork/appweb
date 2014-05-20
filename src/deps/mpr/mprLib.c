@@ -13875,7 +13875,17 @@ static void defaultLogHandler(int flags, int level, cchar *msg)
         msg++;
     }
     if (flags & MPR_LOG_MSG) {
-        fmt(buf, sizeof(buf), "%s: %d: %s\n", prefix, level, msg);
+		do {
+			if (smatch(mprGetCurrentThreadName(), "main")) {
+				fmt(buf, sizeof(buf), "\033[31m%s\033[0m %s: %d: %s\n", "main", prefix, level, msg);
+				break;
+			}
+			if (smatch(mprGetCurrentThreadName(), "marker")) {
+				fmt(buf, sizeof(buf), "\033[32m%s\033[0m %s: %d: %s\n", "marker", prefix, level, msg);
+				break;
+			}
+			fmt(buf, sizeof(buf), "\033[33m%s\033[0m %s: %d: %s\n", mprGetCurrentThreadName(), prefix, level, msg);
+		} while (0);
         mprWriteFileString(file, buf);
 
     } else if (flags & MPR_RAW_MSG) {
@@ -13891,7 +13901,17 @@ static void defaultLogHandler(int flags, int level, cchar *msg)
         }
         fmt(buf, sizeof(buf), "%s: %s: %s\n", prefix, tag, msg);
         mprWriteToOsLog(buf, flags, level);
-        fmt(buf, sizeof(buf), "%s: Error: %s\n", prefix, msg);
+		do {
+			if (smatch(mprGetCurrentThreadName(), "main")) {
+		        fmt(buf, sizeof(buf), "\033[7m\033[31m%s\033[0m %s: Error: %s\n", "main", prefix, msg);
+				break;
+			}
+			if (smatch(mprGetCurrentThreadName(), "marker")) {
+		        fmt(buf, sizeof(buf), "\033[7m\033[32m%s\033[0m %s: Error: %s\n", "marker", prefix, msg);
+				break;
+			}
+			fmt(buf, sizeof(buf), "\033[7m\033[33m%s\033[0m %s: Error: %s\n", mprGetCurrentThreadName(), prefix, msg);
+		} while (0);
         mprWriteFileString(file, buf);
     }
 }
@@ -19316,18 +19336,22 @@ static void signalEvent(MprSignal *sp, MprEvent *event)
     mprTrace(7, "signalEvent signo %d, flags %x", sp->signo, sp->flags);
     np = sp->next;
 
-    if (sp->flags & MPR_SIGNAL_BEFORE) {
-        (sp->handler)(sp->data, sp);
-    } 
-    if (sp->sigaction) {
-        /*
-            Call the original (foreign) action handler. Cannot pass on siginfo, because there is no reliable and scalable
-            way to save siginfo state when the signalHandler is reentrant for a given signal across multiple threads.
-         */
-        (sp->sigaction)(sp->signo, NULL, NULL);
-    }
-    if (sp->flags & MPR_SIGNAL_AFTER) {
-        (sp->handler)(sp->data, sp);
+    if (sp->flags & MPR_SIGNAL_ALONE) {
+    	(sp->handler)(sp->data, sp);
+    } else {
+		if (sp->flags & MPR_SIGNAL_BEFORE) {
+			(sp->handler)(sp->data, sp);
+		}
+		if (sp->sigaction) {
+			/*
+				Call the original (foreign) action handler. Cannot pass on siginfo, because there is no reliable and scalable
+				way to save siginfo state when the signalHandler is reentrant for a given signal across multiple threads.
+			 */
+			(sp->sigaction)(sp->signo, NULL, NULL);
+		}
+		if (sp->flags & MPR_SIGNAL_AFTER) {
+			(sp->handler)(sp->data, sp);
+		}
     }
     if (np) {
         /* 
@@ -19441,7 +19465,7 @@ PUBLIC void mprAddStandardSignals()
     mprAddItem(ssp->standard, mprAddSignalHandler(SIGINT,  standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
     mprAddItem(ssp->standard, mprAddSignalHandler(SIGQUIT, standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
     mprAddItem(ssp->standard, mprAddSignalHandler(SIGTERM, standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
-    mprAddItem(ssp->standard, mprAddSignalHandler(SIGPIPE, standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
+    mprAddItem(ssp->standard, mprAddSignalHandler(SIGPIPE, standardSignalHandler, 0, 0, MPR_SIGNAL_ALONE));
     mprAddItem(ssp->standard, mprAddSignalHandler(SIGUSR1, standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
 #if SIGXFSZ
     mprAddItem(ssp->standard, mprAddSignalHandler(SIGXFSZ, standardSignalHandler, 0, 0, MPR_SIGNAL_AFTER));
@@ -21250,17 +21274,22 @@ PUBLIC int mprLoadSsl()
     cchar               *path;
 
     ss = MPR->socketService;
+    mprLock(ss->mutex);
     if (ss->providers) {
+    	mprUnlock(ss->mutex);
         return 0;
     }
     path = mprJoinPath(mprGetAppDir(), "libmprssl");
     if ((mp = mprCreateModule("sslModule", path, "mprSslInit", NULL)) == 0) {
+    	mprUnlock(ss->mutex);
         return MPR_ERR_CANT_CREATE;
     }
     if (mprLoadModule(mp) < 0) {
+        mprUnlock(ss->mutex);
         mprError("Cannot load %s", path);
         return MPR_ERR_CANT_READ;
     }
+    mprUnlock(ss->mutex);
     return 0;
 #else
     mprError("SSL communications support not included in build");

@@ -121,6 +121,7 @@ static void manageRole(HttpRole *role, int flags);
 static void manageUser(HttpUser *user, int flags);
 static void formLogin(HttpConn *conn);
 static bool fileVerifyUser(HttpConn *conn);
+static bool customVerifyUser(HttpConn *conn);
 
 /*********************************** Code *************************************/
 
@@ -142,6 +143,7 @@ PUBLIC void httpInitAuth(Http *http)
     //  DEPRECATED
     httpAddAuthStore(http, "file", fileVerifyUser);
     httpAddAuthStore(http, "internal", fileVerifyUser);
+    httpAddAuthStore(http, "custom", customVerifyUser);
 }
 
 
@@ -449,23 +451,53 @@ static void loginServiceProc(HttpConn *conn)
     password = httpGetParam(conn, "password", 0);
 
     if (httpLogin(conn, username, password)) {
-        if ((referrer = httpGetSessionVar(conn, "referrer", 0)) != 0) {
-            /*
-                Preserve protocol scheme from existing connection
-             */
-            HttpUri *where = httpCreateUri(referrer, 0);
-            httpCompleteUri(where, conn->rx->parsedUri);
-            referrer = httpUriToString(where, 0);
-            httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, referrer);
+        if (!sncmp(conn->rx->accept, "application/xml,", strlen("application/xml,"))
+        		|| !sncmp(conn->rx->accept, "text/xml,", strlen("text/xml,"))) {
+    		httpSetContentType(conn, "text/xml");
+    		httpFormatResponse(conn,
+    			"<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+    			"<response>\n"
+    			"    <status>%d</status>\n"
+    			"    <header>%s</header>\n"
+    			"    <content>%s</content>\n"
+    			"</response>\n",
+    			0, "OK", "Sign in succeed."
+    		);
+    		httpFinalize(conn);
         } else {
-            if (auth->loggedIn) {
-                httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loggedIn);
-            } else {
-                httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, httpLink(conn, "~", 0));
+			if ((referrer = httpGetSessionVar(conn, "referrer", 0)) != 0) {
+				/*
+					Preserve protocol scheme from existing connection
+				 */
+				HttpUri *where = httpCreateUri(referrer, 0);
+				httpCompleteUri(where, conn->rx->parsedUri);
+				referrer = httpUriToString(where, 0);
+				httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, referrer);
+			} else {
+				if (auth->loggedIn) {
+					httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loggedIn);
+				} else {
+					httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, httpLink(conn, "~", 0));
+				}
             }
         }
     } else {
-        httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loginPage);
+        if (!sncmp(conn->rx->accept, "application/xml,", strlen("application/xml,"))
+        		|| !sncmp(conn->rx->accept, "text/xml,", strlen("text/xml,"))) {
+    		httpSetContentType(conn, "text/xml");
+    		httpFormatResponse(conn,
+    			"<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+    			"<response>\n"
+    			"    <status>%d</status>\n"
+    			"    <header>%s</header>\n"
+    			"    <content>%s</content>\n"
+    			"</response>\n",
+    			1, "FAIL", "The username or password you entered is incorrect."
+    		);
+    		httpFinalize(conn);
+        } else {
+        	httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loginPage);
+        }
     }
 }
 
@@ -476,7 +508,22 @@ static void logoutServiceProc(HttpConn *conn)
 
     auth = conn->rx->route->auth;
     httpRemoveSessionVar(conn, HTTP_SESSION_USERNAME);
-    httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loginPage);
+    if (!sncmp(conn->rx->accept, "application/xml,", strlen("application/xml,"))
+    		|| !sncmp(conn->rx->accept, "text/xml,", strlen("text/xml,"))) {
+		httpSetContentType(conn, "text/xml");
+		httpFormatResponse(conn,
+			"<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+			"<response>\n"
+			"    <status>%d</status>\n"
+			"    <header>%s</header>\n"
+			"    <content>%s</content>\n"
+			"</response>\n",
+			0, "OK", "Sign out succeed."
+		);
+		httpFinalize(conn);
+    } else {
+    	httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, auth->loginPage);
+    }
 }
 
 
@@ -828,10 +875,77 @@ static bool fileVerifyUser(HttpConn *conn)
 
 
 /*
+    Verify the user password based on the custom users set.
+ */
+static bool customVerifyUser(HttpConn *conn)
+{
+    HttpRx      *rx;
+    HttpAuth    *auth;
+    bool        success;
+
+    rx = conn->rx;
+    auth = rx->route->auth;
+//    if (!conn->encoded) {
+//        conn->password = mprGetMD5(sfmt("%s:%s:%s", conn->username, auth->realm, conn->password));
+//        conn->encoded = 1;
+//    }
+    if (!conn->user && (conn->user = mprLookupKey(auth->users, conn->username)) == 0) {
+        mprLog(5, "fileVerifyUser: Unknown user \"%s\" for route %s", conn->username, rx->route->name);
+        return 0;
+    }
+    if (rx->passDigest) {
+        /* Digest authentication computes a digest using the password as one ingredient */
+        success = smatch(conn->password, rx->passDigest);
+    } else {
+        void            *handle;
+		#ifdef RTLD_DEFAULT
+			handle = RTLD_DEFAULT;
+		#else
+		#ifdef RTLD_MAIN_ONLY
+			handle = RTLD_MAIN_ONLY;
+		#else
+			handle = 0;
+		#endif
+		#endif
+
+		bool (* fn)(cchar *username, cchar *password);
+		if (!(fn = dlsym(handle, "implementationVerifyUser"))) {
+			mprError("Cannot custom verify user\nReason: can't find function \"%s\"", "implementationVerifyUser");
+			return 0;
+		}
+
+		success = fn(conn->username, conn->password);
+    }
+    if (success) {
+        mprLog(5, "User \"%s\" authenticated for route %s", conn->username, rx->route->name);
+    } else {
+        mprLog(5, "Password for user \"%s\" failed to authenticate for route %s", conn->username, rx->route->name);
+    }
+    return success;
+}
+
+
+/*
     Web form-based authentication callback to ask the user to login via a web page
  */
 static void formLogin(HttpConn *conn)
 {
+    if (!sncmp(conn->rx->accept, "application/xml,", strlen("application/xml,"))
+    		|| !sncmp(conn->rx->accept, "text/xml,", strlen("text/xml,"))) {
+		httpSetContentType(conn, "text/xml");
+		httpFormatResponse(conn,
+			"<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n"
+			"<response>\n"
+			"    <status>%d</status>\n"
+			"    <header>%s</header>\n"
+			"    <content>%s</content>\n"
+			"</response>\n",
+			-1, "UNAUTHORIZED", "Access to this resource is denied, your client has not supplied the correct authentication."
+		);
+		httpFinalize(conn);
+    	return;
+    }
+
     httpRedirect(conn, HTTP_CODE_MOVED_TEMPORARILY, conn->rx->route->auth->loginPage);
 }
 

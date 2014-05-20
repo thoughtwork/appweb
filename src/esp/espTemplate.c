@@ -479,7 +479,15 @@ PUBLIC char *espBuildScript(HttpRoute *route, cchar *page, cchar *path, cchar *c
             /* NOTE: layout parsing not supported */
             control = stok(token, " \t\r\n", &token);
             if (scmp(control, "content") == 0) {
-                mprPutStringToBuf(body, CONTENT_MARKER);
+                if (token == 0) {
+                	token = "";
+                }
+				token = strim(token, " \t\r\n\"", MPR_TRIM_BOTH);
+                if (*token == '\0') {
+                	mprPutToBuf(body, "${%s}", CONTENT_MARKER);
+                } else {
+                	mprPutToBuf(body, "${%s \"%s\"}", CONTENT_MARKER, token);
+                }
 
             } else if (scmp(control, "include") == 0) {
                 if (token == 0) {
@@ -581,6 +589,7 @@ PUBLIC char *espBuildScript(HttpRoute *route, cchar *page, cchar *path, cchar *c
         if ((layoutCode = espBuildScript(route, layoutPage, layout, NULL, NULL, state, err)) == 0) {
             return 0;
         }
+/*
 #if BIT_DEBUG
         if (!scontains(layoutCode, CONTENT_MARKER)) {
             *err = sfmt("Layout page is missing content marker: %s", layout);
@@ -588,6 +597,47 @@ PUBLIC char *espBuildScript(HttpRoute *route, cchar *page, cchar *path, cchar *c
         }
 #endif
         bodyCode = sreplace(layoutCode, CONTENT_MARKER, mprGetBufStart(body));
+*/
+        MprHash *replacer = mprCreateHash(0, 0);
+        mprAddKey(replacer, sfmt("%s", CONTENT_MARKER), sclone(mprGetBufStart(body)));
+        {
+			cchar *str = mprGetBufStart(body), *s;
+			cchar *sh = NULL, *holder = NULL, *sc = NULL, *content = NULL;
+			for (s = str; *s; s++) {
+				if (!holder && !sh) {
+					if (sncmp(s, "<content", strlen("<content")) == 0) {
+						sh = (s + strlen("<content"));
+					}
+					continue;
+				}
+				if (!holder && sh) {
+					if (sncmp(s, ">", strlen(">")) == 0) {
+						holder = snclone(sh, s - sh);
+						sh = NULL;
+
+						holder = strim(holder, " \t\r\n\"\\", MPR_TRIM_BOTH);
+						if (*holder == '\0') {
+							holder = NULL;
+						}
+					}
+					continue;
+				}
+
+				if (!content && !sc) {
+					sc = s;
+				}
+				if (!content && sc) {
+					if (sncmp(s, "</content>", strlen("</content>")) == 0) {
+						content = snclone(sc, s - sc);
+						sc = NULL;
+
+						mprAddKey(replacer, sfmt("%s \"%s\"", CONTENT_MARKER, holder), content);
+						holder = content = NULL;
+					}
+				}
+			}
+        }
+        bodyCode = stemplate(layoutCode, replacer);
     } else {
         bodyCode = mprGetBufStart(body);
     }

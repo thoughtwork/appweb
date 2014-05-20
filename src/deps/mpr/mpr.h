@@ -136,7 +136,7 @@ struct  MprXml;
 #define MPR_TIMEOUT_STOP        30000       /**< Default wait when stopping resources (30 sec) */
 #define MPR_TIMEOUT_STOP_TASK   10000       /**< Time to stop or reap tasks (vxworks) */
 #define MPR_TIMEOUT_LINGER      2000        /**< Close socket linger timeout */
-#define MPR_TIMEOUT_GC_SYNC     100         /**< Short wait period for threads to synchronize */
+#define MPR_TIMEOUT_GC_SYNC     10000       /**< Short wait period for threads to synchronize */
 #define MPR_TIMEOUT_NO_BUSY     1000        /**< Wait period to minimize CPU drain */
 #define MPR_TIMEOUT_NAP         20          /**< Short pause */
 
@@ -7638,6 +7638,7 @@ PUBLIC void mprAddStandardSignals();
 
 #define MPR_SIGNAL_BEFORE   0x1             /**< Flag to mprAddSignalHandler to run handler before existing handlers */
 #define MPR_SIGNAL_AFTER    0x2             /**< Flag to mprAddSignalHandler to run handler after existing handlers */
+#define MPR_SIGNAL_ALONE    0x4             /**< Flag to mprAddSignalHandler to run handler alone */
 
 /**
     Add a signal handler. The signal handling mechanism will trap the specified signal if issued and create an

@@ -73,6 +73,19 @@ static void usageError();
 
 /*********************************** Code *************************************/
 
+#ifndef EMBED_APPWEB
+    #define EMBED_APPWEB 0
+#endif
+
+#if EMBED_APPWEB
+#undef MAIN(name, _argc, _argv, _envp)
+#define MAIN(name, _argc, _argv, _envp) int appweb(_argc, _argv, _envp)
+#endif
+
+#if EMBED_APPWEB
+#define exit(x) return x
+#endif
+
 MAIN(appweb, int argc, char **argv, char **envp)
 {
     Mpr     *mpr;
@@ -224,6 +237,9 @@ MAIN(appweb, int argc, char **argv, char **envp)
     return status;
 }
 
+#if EMBED_APPWEB
+#undef exit(x)
+#endif
 
 static void manageApp(AppwebApp *app, int flags)
 {
